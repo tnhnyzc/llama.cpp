@@ -1,3 +1,4 @@
+{%- set enable_thinking = enable_thinking | default(true) -%}
 {% macro render_content(content) %}{% if content is none %}{{- '' }}{% elif content is string %}{{- content }}{% elif content is mapping %}{{- content['value'] if 'value' in content else content['text'] }}{% elif content is iterable %}{% for item in content %}{% if item.type == 'text' %}{{- item['value'] if 'value' in item else item['text'] }}{% elif item.type == 'image' %}<im_patch>{% endif %}{% endfor %}{% endif %}{% endmacro %}
 {{bos_token}}{%- if tools %}
     {{- '<|im_start|>system\n' }}
@@ -39,7 +40,7 @@
                 {%- set reasoning_content = '' %}
             {%- endif %}
         {%- endif %}
-        {%- if loop.index0 > ns.last_query_index %}
+        {%- if loop.index0 > ns.last_query_index and enable_thinking %}
             {{- '<|im_start|>' + message.role + '\n<think>\n' + reasoning_content + '\n</think>\n' + content }}
         {%- else %}
             {{- '<|im_start|>' + message.role + '\n' + content }}
@@ -76,5 +77,9 @@
     {%- endif %}
 {%- endfor %}
 {%- if add_generation_prompt %}
-    {{- '<|im_start|>assistant\n<think>\n' }}
+    {%- if enable_thinking %}
+        {{- '<|im_start|>assistant\n<think>\n' }}
+    {%- else %}
+        {{- '<|im_start|>assistant\n' }}
+    {%- endif %}
 {%- endif %}
