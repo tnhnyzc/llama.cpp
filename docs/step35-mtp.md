@@ -27,7 +27,7 @@ step35.nextn_predict_layers = 1
 
 So `--draft 2` and deeper drafts reuse the single MTP layer recurrently. They are not true multi-head MTP for this model file. The runtime now maps draft step `k` to nextn layer `base + k` when a future Step GGUF exposes multiple nextn layers, while clamping to the last available layer if the requested draft depth is larger than the model supports.
 
-In the four-prompt matrix, using request-level dotted keys `"speculative.n_max"` and `"speculative.pq_accept"` at `temp 0.6`, the averages were:
+In one four-prompt matrix, using request-level dotted keys `"speculative.n_max"` and `"speculative.pq_accept"` at `temp 0.6`, the averages were:
 
 | `n_max` | p/q accept | avg tok/s | avg acceptance |
 | --- | --- | ---: | ---: |
@@ -42,13 +42,43 @@ In the four-prompt matrix, using request-level dotted keys `"speculative.n_max"`
 
 This is why `--draft 3` and `--draft 4` are not recommended for the currently tested one-nextn GGUF. They are useful diagnostics, but not a faster runtime path here.
 
+A later matrix after prompt-cache fixes showed that p/q is workload-sensitive rather than a universal win:
+
+| temperature | p/q accept | avg tok/s | avg acceptance |
+| --- | --- | ---: | ---: |
+| 0.6 | off | 38.17 | 0.783 |
+| 0.6 | on | 32.64 | 0.759 |
+| 1.0 | off | 29.60 | 0.700 |
+| 1.0 | on | 30.33 | 0.789 |
+
+So the current practical split is:
+
+- `temp 0.6`, `--draft 1`, exact-match verifier for the fast default path;
+- `temp 1.0`, `--draft 1`, `--spec-draft-pq-accept` when testing Xiaomi-style stochastic sampling.
+
+Use repeated runs before drawing conclusions from a single chat session. Speculative acceptance is prompt- and sampler-sensitive, and short generations can swing noticeably.
+
 ## Runtime Notes
 
 - `--spec-draft-backend-sampling` exists but is disabled by default for Step MTP. Step's multi-row first pass needs CPU sampling from the final output row; backend top-k sampling is not currently the right path here.
-- `--spec-draft-pq-accept` enables experimental stochastic p/q verification for MTP in `llama-server`. The default verifier is exact-match. When p/q is enabled, MTP proposals are sampled from the draft proposal distribution instead of always taking the top-1 token, so the stored draft probability is the actual proposal `q`. In the local four-prompt `temp 0.6` matrix, p/q slightly improved average throughput for `--draft 1` and `--draft 2`, but did not make deeper recurrent drafts beat `--draft 1`. It remains opt-in.
+- `--spec-draft-pq-accept` enables experimental stochastic p/q verification for MTP in `llama-server`. The default verifier is exact-match. When p/q is enabled, MTP proposals are sampled from the draft proposal distribution instead of always taking the top-1 token, so the stored draft probability is the actual proposal `q`. Local matrices have been mixed: p/q helped `temp 1.0` acceptance, but did not consistently beat exact-match at `temp 0.6`. It remains opt-in.
 - `llama-server` can use the RAM prompt cache with MTP. On prompt-cache restore, the target KV is reused, while the MTP draft context is reset and resumes after fresh target hidden state is produced. This avoids disabling prompt-cache entirely, but the first speculative opportunity after a cache restore may be skipped.
 - The MTP draft context runs with embeddings enabled. Warnings about embeddings requiring all input tokens to be marked as outputs are expected for this path.
 - `--draft 1` is the default recommendation unless testing a GGUF with more than one trained nextn layer.
+
+## Repeatable Local Matrix
+
+Run a small fixed-prompt matrix against an already running server:
+
+```bash
+python3 scripts/bench-step-mtp.py \
+  --url http://127.0.0.1:10009 \
+  --draft 1 \
+  --temps 0.6,1.0 \
+  --pq false,true
+```
+
+This prints per-prompt and averaged throughput. If the server response exposes speculative counters, it also prints acceptance; otherwise use the server logs for the acceptance line.
 
 ## Notes From MiMo MTP Work
 
