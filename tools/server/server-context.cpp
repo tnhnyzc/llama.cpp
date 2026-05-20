@@ -198,7 +198,6 @@ struct server_slot {
     bool has_next_token = true;
     bool has_new_line   = false;
     bool truncated      = false;
-    bool mtp_cache_reused = false;
     llama_pos mtp_common_prefix_len = 0;
 
     stop_type stop;
@@ -290,7 +289,6 @@ struct server_slot {
         drafted.clear();
         i_batch_dft.clear();
         mtp_prompt_hidden.clear();
-        mtp_cache_reused = false;
         mtp_common_prefix_len = 0;
         generated_tokens.clear();
         generated_token_probs.clear();
@@ -389,7 +387,7 @@ struct server_slot {
     }
 
     bool can_speculate() const {
-        return !!spec && !(task && task->params.speculative.type == COMMON_SPECULATIVE_TYPE_MTP && mtp_cache_reused);
+        return !!spec;
     }
 
     bool need_embd() const {
@@ -1025,17 +1023,16 @@ private:
             batch = llama_batch_init(std::max(n_batch, params_base.n_parallel), 0, 1);
         }
 
-        const bool disable_prompt_cache_for_mtp = params_base.speculative.type == COMMON_SPECULATIVE_TYPE_MTP;
-
-        if (disable_prompt_cache_for_mtp) {
-            SRV_WRN("%s", "prompt cache is disabled because MTP speculative cannot reconstruct hidden state after prompt-cache reuse yet\n");
-        } else if (params_base.cache_ram_mib != 0) {
+        if (params_base.cache_ram_mib != 0) {
             if (params_base.cache_ram_mib < 0) {
                 SRV_WRN("prompt cache is enabled, size limit: %s\n", "no limit");
             } else {
                 SRV_WRN("prompt cache is enabled, size limit: %d MiB\n", params_base.cache_ram_mib);
             }
             SRV_WRN("%s", "use `--cache-ram 0` to disable the prompt cache\n");
+            if (params_base.speculative.type == COMMON_SPECULATIVE_TYPE_MTP) {
+                SRV_WRN("%s", "MTP speculative will restart its draft-side hidden/KV state after prompt-cache restore\n");
+            }
 
             prompt_cache = std::make_unique<server_prompt_cache>(params_base.cache_ram_mib, n_ctx);
         } else {
@@ -1257,9 +1254,8 @@ private:
                 } else if (task.params.speculative.type == COMMON_SPECULATIVE_TYPE_MTP) {
                     common_speculative_invalidate_retained_state(ret->spec);
                     ret->mtp_prompt_hidden.clear();
-                    ret->mtp_cache_reused = true;
                     ret->mtp_common_prefix_len = 0;
-                    SLT_WRN(*ret, "%s", "disabling MTP speculative on prompt-cache reuse until hidden-state reconstruction is implemented\n");
+                    SLT_WRN(*ret, "%s", "MTP draft state reset after prompt-cache restore; speculation will resume after fresh hidden state is produced\n");
                 }
 
                 prompt_cache->update();
