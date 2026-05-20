@@ -3096,34 +3096,41 @@ private:
                         const auto & prompt_tokens = slot.prompt.tokens.get_text_tokens();
                         if (slot.task->params.speculative.type == COMMON_SPECULATIVE_TYPE_MTP) {
                             const int32_t n_embd = llama_model_n_embd(model);
-                            const llama_pos reuse_len = std::min<llama_pos>(
+                            const bool hidden_rows_valid =
+                                n_embd > 0 && slot.mtp_prompt_hidden.size() % (size_t) n_embd == 0;
+                            const llama_pos hidden_rows = hidden_rows_valid
+                                ? (llama_pos) (slot.mtp_prompt_hidden.size() / (size_t) n_embd)
+                                : -1;
+                            const llama_pos source_start = hidden_rows_valid && hidden_rows <= (llama_pos) prompt_tokens.size()
+                                ? (llama_pos) prompt_tokens.size() - hidden_rows
+                                : 0;
+                            const llama_pos retained_prefix_len = std::min<llama_pos>(
                                     slot.mtp_common_prefix_len,
-                                    (llama_pos) prompt_tokens.size());
-                            llama_tokens prompt_tail_tokens(
-                                    prompt_tokens.begin() + reuse_len,
-                                    prompt_tokens.end());
+                                    source_start);
 
-                            common_speculative_begin(slot.spec, prompt_tokens, reuse_len);
+                            common_speculative_begin(slot.spec, prompt_tokens, retained_prefix_len);
 
-                            const int64_t expected_hidden = (int64_t) prompt_tail_tokens.size()*n_embd;
-                            if ((int64_t) slot.mtp_prompt_hidden.size() != expected_hidden) {
-                                SLT_WRN(slot, "MTP prompt tail hidden size mismatch (%zu vs %lld) - clearing initial source\n",
-                                        slot.mtp_prompt_hidden.size(), (long long) expected_hidden);
+                            if (!hidden_rows_valid || hidden_rows < 0 || hidden_rows > (llama_pos) prompt_tokens.size()) {
+                                SLT_WRN(slot, "MTP prompt hidden row count mismatch (%zu floats, n_embd = %d, prompt tokens = %zu) - clearing initial source\n",
+                                        slot.mtp_prompt_hidden.size(), n_embd, prompt_tokens.size());
                                 common_speculative_set_first_pass_source(
                                         slot.spec,
                                         llama_tokens(),
                                         nullptr,
                                         0,
                                         n_embd,
-                                        reuse_len);
+                                        retained_prefix_len);
                             } else {
+                                llama_tokens prompt_tail_tokens(
+                                        prompt_tokens.begin() + source_start,
+                                        prompt_tokens.end());
                                 common_speculative_set_first_pass_source(
                                         slot.spec,
                                         prompt_tail_tokens,
-                                        expected_hidden > 0 ? slot.mtp_prompt_hidden.data() : nullptr,
+                                        hidden_rows > 0 ? slot.mtp_prompt_hidden.data() : nullptr,
                                         prompt_tail_tokens.size(),
                                         n_embd,
-                                        reuse_len);
+                                        source_start);
                             }
                         } else {
                             common_speculative_begin(slot.spec, prompt_tokens);

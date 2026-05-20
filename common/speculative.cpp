@@ -1750,9 +1750,11 @@ llama_tokens common_speculative_draft(
 }
 
 void common_speculative_accept(common_speculative * spec, uint16_t n_accepted, const std::vector<int32_t> & batch_idxs) {
-    common_speculative_state * impl = spec->curr_impl;
+    if (spec == nullptr || spec->curr_impl == nullptr) {
+        return;
+    }
 
-    GGML_ASSERT(impl);
+    common_speculative_state * impl = spec->curr_impl;
 
     {
         common_time_meas tm(impl->t_accept_us, !impl->gen_perf);
