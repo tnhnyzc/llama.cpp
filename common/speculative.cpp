@@ -1093,14 +1093,16 @@ struct common_speculative_state_mtp : public common_speculative_state {
             int32_t output_idx,
             const common_params_speculative & params,
             llama_tokens & result) {
-        common_sampler_sample(smpl, ctx_dft, output_idx, true);
+        const llama_token sampled_id = common_sampler_sample(smpl, ctx_dft, output_idx, true);
         const auto * cur_p = common_sampler_get_candidates(smpl, true);
         if (!cur_p || cur_p->size == 0) {
             return MTP_DRAFT_STEP_DECODE_FAIL;
         }
 
-        const llama_token id = cur_p->data[0].id;
-        const float       p  = cur_p->data[0].p;
+        const bool use_sampled_proposal = params.pq_accept && cur_p->selected >= 0;
+        const int  selected             = use_sampled_proposal ? cur_p->selected : 0;
+        const llama_token id = use_sampled_proposal ? sampled_id : cur_p->data[0].id;
+        const float       p  = cur_p->data[selected].p;
 
         round.draft_distributions.emplace_back(cur_p->data, cur_p->data + cur_p->size);
 

@@ -60,7 +60,8 @@ static float server_token_prob_from_distribution(const std::vector<llama_token_d
 
 static llama_token server_sample_residual_token(
         const llama_token_data_array *              target_p,
-        const std::vector<llama_token_data> &       draft_p) {
+        const std::vector<llama_token_data> &       draft_p,
+        std::mt19937 &                             rng) {
     GGML_ASSERT(target_p != nullptr);
 
     std::vector<llama_token> ids;
@@ -85,7 +86,6 @@ static llama_token server_sample_residual_token(
         return target_p->data[target_p->selected >= 0 ? target_p->selected : 0].id;
     }
 
-    static thread_local std::mt19937 rng(std::random_device{}());
     std::discrete_distribution<size_t> dist(weights.begin(), weights.end());
     return ids[dist(rng)];
 }
@@ -95,13 +95,13 @@ static std::vector<llama_token> server_sample_and_accept_pq(
         llama_context *                                    ctx,
         const std::vector<int32_t> &                       idxs,
         const llama_tokens &                               draft,
-        const std::vector<std::vector<llama_token_data>> & draft_dists) {
+        const std::vector<std::vector<llama_token_data>> & draft_dists,
+        std::mt19937 &                                    rng) {
     GGML_ASSERT(idxs.size() == draft.size() + 1 && "idxs.size() must be draft.size() + 1");
 
     std::vector<llama_token> result;
     result.reserve(idxs.size());
 
-    static thread_local std::mt19937 rng(std::random_device{}());
     std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
 
     size_t i = 0;
@@ -118,7 +118,7 @@ static std::vector<llama_token> server_sample_and_accept_pq(
 
         const llama_token id = accept
             ? draft[i]
-            : server_sample_residual_token(target_p, draft_p);
+            : server_sample_residual_token(target_p, draft_p, rng);
 
         common_sampler_accept(smpl, id, true);
         result.push_back(id);
@@ -253,6 +253,7 @@ struct server_slot {
     json json_schema;
 
     common_sampler_ptr smpl;
+    std::mt19937 pq_rng;
 
     llama_token  sampled; // in speculative mode, this is the last accepted token
     llama_tokens drafted;
@@ -330,6 +331,22 @@ struct server_slot {
 
         SLT_INF(*this, "init sampler, took %0.2f ms, tokens: text = %d, total = %d\n",
                 (ggml_time_us() - t_start) / 1000.0, n_text, (int) prompt.tokens.size());
+    }
+
+    void init_pq_rng() {
+        uint32_t seed = task && task->params.sampling.seed != LLAMA_DEFAULT_SEED
+            ? task->params.sampling.seed
+            : LLAMA_DEFAULT_SEED;
+
+        if (seed == LLAMA_DEFAULT_SEED && smpl) {
+            seed = common_sampler_get_seed(smpl.get());
+        }
+
+        if (seed == LLAMA_DEFAULT_SEED) {
+            seed = std::random_device{}();
+        }
+
+        pq_rng.seed(seed);
     }
 
     // if the context does not have a memory module then all embeddings have to be computed within a single ubatch
@@ -1407,6 +1424,7 @@ private:
         }
 
         slot.task = std::make_unique<const server_task>(std::move(task));
+        slot.init_pq_rng();
 
         slot.state = slot.task->is_child()
             ? SLOT_STATE_WAIT_OTHER // wait for the parent to process prompt
@@ -3182,7 +3200,8 @@ private:
                             ctx,
                             slot.i_batch_dft,
                             slot.drafted,
-                            common_speculative_get_draft_distributions(slot.spec))
+                            common_speculative_get_draft_distributions(slot.spec),
+                            slot.pq_rng)
                     : common_sampler_sample_and_accept_n(slot.smpl.get(), ctx, slot.i_batch_dft, slot.drafted);
                 const std::vector<int32_t> batch_idxs = slot.i_batch_dft;
                 slot.i_batch_dft.clear();
