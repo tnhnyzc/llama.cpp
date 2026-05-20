@@ -806,7 +806,8 @@ struct common_speculative_state_mtp : public common_speculative_state {
     common_sampler * smpl = nullptr;
     llama_batch batch;
 
-    const int32_t mtp_layer_idx;
+    const int32_t mtp_layer_idx_base;
+    const int32_t n_mtp_layers;
     const int32_t n_embd;
 
     // retained state
@@ -835,12 +836,14 @@ struct common_speculative_state_mtp : public common_speculative_state {
     common_speculative_state_mtp(
             enum common_speculative_type type,
             llama_context * ctx_tgt,
-            llama_context * ctx_dft)
+            llama_context * ctx_dft,
+            const common_params_speculative & params)
         : common_speculative_state(type)
         , ctx_tgt(ctx_tgt)
         , ctx_dft(ctx_dft)
         , batch(llama_batch_init(llama_n_batch(ctx_dft), 0, 1))
-        , mtp_layer_idx(llama_model_n_layer(llama_get_model(ctx_dft)) - llama_model_n_nextn_predict_layers(llama_get_model(ctx_dft)))
+        , mtp_layer_idx_base(llama_model_n_layer(llama_get_model(ctx_dft)) - llama_model_n_nextn_predict_layers(llama_get_model(ctx_dft)))
+        , n_mtp_layers(llama_model_n_nextn_predict_layers(llama_get_model(ctx_dft)))
         , n_embd(llama_model_n_embd(llama_get_model(ctx_dft))) {
         common_params_sampling sparams;
         sparams.no_perf = false;
@@ -853,6 +856,15 @@ struct common_speculative_state_mtp : public common_speculative_state {
         draft_kv_iswa = dynamic_cast<llama_kv_cache_iswa *>(mem);
 
         smpl = common_sampler_init(llama_get_model(ctx_dft), sparams);
+
+        if (params.backend_sampling) {
+            LOG_WRN("%s: backend MTP draft sampling is disabled for Step MTP because its multi-row first pass requires CPU sampling of the final row\n", __func__);
+        }
+
+        if (n_mtp_layers > 1) {
+            LOG_INF("%s: Step MTP will use %d nextn layers for draft steps\n", __func__, n_mtp_layers);
+        }
+
         round.recurrence_hidden.resize(n_embd);
 
         llama_set_embeddings(ctx_dft, true);
@@ -1093,6 +1105,12 @@ struct common_speculative_state_mtp : public common_speculative_state {
         return p >= params.p_min ? MTP_DRAFT_STEP_CONTINUE : MTP_DRAFT_STEP_STOP;
     }
 
+    int32_t layer_idx_for_step(int32_t step_idx) const {
+        GGML_ASSERT(n_mtp_layers > 0);
+        const int32_t clamped_step = std::min<int32_t>(std::max<int32_t>(step_idx, 0), n_mtp_layers - 1);
+        return mtp_layer_idx_base + clamped_step;
+    }
+
     int run_first_pass(
             const llama_tokens &       source_tokens,
             const std::vector<float> & source_hidden_states,
@@ -1118,7 +1136,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
         }
 
         llama_set_mtp_op_type(ctx_dft, LLAMA_MTP_OP_DRAFT_GEN);
-        llama_set_mtp_layer_idx(ctx_dft, mtp_layer_idx);
+        llama_set_mtp_layer_idx(ctx_dft, layer_idx_for_step(0));
         llama_set_draft_input_hidden_state(ctx_dft, source_hidden_states.data());
         const auto clear_draft_input = [&]() {
             llama_set_mtp_op_type(ctx_dft, LLAMA_MTP_OP_NONE);
@@ -1143,6 +1161,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
     }
 
     int run_single_token_step(
+            int32_t       step_idx,
             llama_token frontier_token,
             llama_pos   pos,
             const common_params_speculative & params,
@@ -1151,7 +1170,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
         common_batch_add(batch, frontier_token, pos, { 0 }, true);
 
         llama_set_mtp_op_type(ctx_dft, LLAMA_MTP_OP_DRAFT_GEN);
-        llama_set_mtp_layer_idx(ctx_dft, mtp_layer_idx);
+        llama_set_mtp_layer_idx(ctx_dft, layer_idx_for_step(step_idx));
         llama_set_draft_input_hidden_state(ctx_dft, round.recurrence_hidden.data());
         const auto clear_draft_input = [&]() {
             llama_set_mtp_op_type(ctx_dft, LLAMA_MTP_OP_NONE);
@@ -1241,7 +1260,8 @@ struct common_speculative_state_mtp : public common_speculative_state {
             llama_pos next_pos = verified_pos_end;
             while ((int) result.size() < params.n_max) {
                 const size_t result_size_prev = result.size();
-                const int step_status = run_single_token_step(result.back(), next_pos, params, result);
+                const int32_t step_idx = (int32_t) result.size();
+                const int step_status = run_single_token_step(step_idx, result.back(), next_pos, params, result);
                 if (result.size() == result_size_prev) {
                     if (step_status < 0) {
                         record_step_failure(step_status, params, result.size());
@@ -1581,7 +1601,7 @@ common_speculative * common_speculative_init(
                 }
 
                 llama_set_embeddings(ctx_mtp, true);
-                impls.push_back(std::make_unique<common_speculative_state_mtp>(config.type, ctx_tgt, ctx_mtp));
+                impls.push_back(std::make_unique<common_speculative_state_mtp>(config.type, ctx_tgt, ctx_mtp, config.params));
                 break;
             }
             default:

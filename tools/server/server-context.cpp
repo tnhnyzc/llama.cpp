@@ -902,7 +902,11 @@ private:
             batch = llama_batch_init(std::max(n_batch, params_base.n_parallel), 0, 1);
         }
 
-        if (params_base.cache_ram_mib != 0) {
+        const bool disable_prompt_cache_for_mtp = params_base.speculative.type == COMMON_SPECULATIVE_TYPE_MTP;
+
+        if (disable_prompt_cache_for_mtp) {
+            SRV_WRN("%s", "prompt cache is disabled because MTP speculative cannot reconstruct hidden state after prompt-cache reuse yet\n");
+        } else if (params_base.cache_ram_mib != 0) {
             if (params_base.cache_ram_mib < 0) {
                 SRV_WRN("prompt cache is enabled, size limit: %s\n", "no limit");
             } else {

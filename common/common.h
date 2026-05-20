@@ -319,6 +319,7 @@ struct common_params_speculative {
     int32_t n_min   = 0; // minimum number of draft tokens to use for speculative decoding
     float   p_split = 0.1f; // speculative decoding split probability
     float   p_min   = 0.75f; // minimum speculative decoding probability (greedy)
+    bool    backend_sampling = false; // offload MTP draft top-k sampling to the backend when supported
 
     // ngram-based speculative decoding
 
