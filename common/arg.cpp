@@ -3472,6 +3472,20 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_NO_SPEC_DRAFT_BACKEND_SAMPLING"));
     add_opt(common_arg(
+        {"--spec-draft-pq-accept"},
+        "enable stochastic p/q acceptance for MTP verification (experimental, default: disabled)",
+        [](common_params & params) {
+            params.speculative.pq_accept = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_PQ_ACCEPT"));
+    add_opt(common_arg(
+        {"--no-spec-draft-pq-accept"},
+        "disable stochastic p/q acceptance for MTP verification",
+        [](common_params & params) {
+            params.speculative.pq_accept = false;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_NO_SPEC_DRAFT_PQ_ACCEPT"));
+    add_opt(common_arg(
         {"-cd", "--ctx-size-draft"}, "N",
         string_format("size of the prompt context for the draft model (default: %d, 0 = loaded from model)", params.speculative.n_ctx),
         [](common_params & params, int value) {

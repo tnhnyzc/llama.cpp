@@ -320,6 +320,7 @@ struct common_params_speculative {
     float   p_split = 0.1f; // speculative decoding split probability
     float   p_min   = 0.75f; // minimum speculative decoding probability (greedy)
     bool    backend_sampling = false; // offload MTP draft top-k sampling to the backend when supported
+    bool    pq_accept = false; // use stochastic p/q acceptance for MTP verification
 
     // ngram-based speculative decoding
 

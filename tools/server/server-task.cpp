@@ -77,6 +77,7 @@ json task_params::to_json(bool only_metrics) const {
             {"speculative.n_max",         speculative.n_max},
             {"speculative.n_min",         speculative.n_min},
             {"speculative.p_min",         speculative.p_min},
+            {"speculative.pq_accept",     speculative.pq_accept},
             {"speculative.type",          common_speculative_type_to_str(speculative.type)},
             {"speculative.ngram_size_n",  speculative.ngram_size_n},
             {"speculative.ngram_size_m",  speculative.ngram_size_m},
@@ -140,6 +141,7 @@ json task_params::to_json(bool only_metrics) const {
         {"speculative.n_max",         speculative.n_max},
         {"speculative.n_min",         speculative.n_min},
         {"speculative.p_min",         speculative.p_min},
+        {"speculative.pq_accept",     speculative.pq_accept},
         {"speculative.type",          common_speculative_type_to_str(speculative.type)},
         {"speculative.ngram_size_n",  speculative.ngram_size_n},
         {"speculative.ngram_size_m",  speculative.ngram_size_m},
@@ -305,6 +307,7 @@ task_params server_task::params_from_json_cmpl(
     params.speculative.n_min = json_value(data, "speculative.n_min", defaults.speculative.n_min);
     params.speculative.n_max = json_value(data, "speculative.n_max", defaults.speculative.n_max);
     params.speculative.p_min = json_value(data, "speculative.p_min", defaults.speculative.p_min);
+    params.speculative.pq_accept = json_value(data, "speculative.pq_accept", defaults.speculative.pq_accept);
 
     params.speculative.n_min = std::min(params.speculative.n_max, params.speculative.n_min);
     params.speculative.n_min = std::max(params.speculative.n_min, 0);

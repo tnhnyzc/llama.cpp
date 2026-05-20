@@ -49,6 +49,10 @@ void common_speculative_set_first_pass_source(
         int32_t              n_embd,
         llama_pos            start_pos);
 
+// returns the proposal distributions for the most recent draft, one top-k list per drafted token
+const std::vector<std::vector<llama_token_data>> & common_speculative_get_draft_distributions(
+        const common_speculative * spec);
+
 // sample up to n_draft tokens and add them to the batch using the draft model
 llama_tokens common_speculative_draft(
                      common_speculative * spec,

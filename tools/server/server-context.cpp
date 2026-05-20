@@ -15,9 +15,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
+#include <cmath>
 #include <exception>
 #include <memory>
 #include <filesystem>
+#include <random>
 
 // fix problem with std::min and std::max
 #if defined(_WIN32)
@@ -31,6 +33,110 @@
 using json = nlohmann::ordered_json;
 
 constexpr int HTTP_POLLING_SECONDS = 1;
+
+static float server_token_prob_from_candidates(const llama_token_data_array * cur_p, llama_token token) {
+    if (cur_p == nullptr) {
+        return 0.0f;
+    }
+
+    for (size_t i = 0; i < cur_p->size; ++i) {
+        if (cur_p->data[i].id == token) {
+            return std::isfinite(cur_p->data[i].p) ? cur_p->data[i].p : 0.0f;
+        }
+    }
+
+    return 0.0f;
+}
+
+static float server_token_prob_from_distribution(const std::vector<llama_token_data> & dist, llama_token token) {
+    for (const auto & data : dist) {
+        if (data.id == token) {
+            return std::isfinite(data.p) ? data.p : 0.0f;
+        }
+    }
+
+    return 0.0f;
+}
+
+static llama_token server_sample_residual_token(
+        const llama_token_data_array *              target_p,
+        const std::vector<llama_token_data> &       draft_p) {
+    GGML_ASSERT(target_p != nullptr);
+
+    std::vector<llama_token> ids;
+    std::vector<double> weights;
+    ids.reserve(target_p->size);
+    weights.reserve(target_p->size);
+
+    double sum = 0.0;
+    for (size_t i = 0; i < target_p->size; ++i) {
+        const llama_token id = target_p->data[i].id;
+        const double p = std::isfinite(target_p->data[i].p) ? target_p->data[i].p : 0.0;
+        const double q = server_token_prob_from_distribution(draft_p, id);
+        const double w = std::max(0.0, p - q);
+        if (w > 0.0) {
+            ids.push_back(id);
+            weights.push_back(w);
+            sum += w;
+        }
+    }
+
+    if (ids.empty() || sum <= 0.0) {
+        return target_p->data[target_p->selected >= 0 ? target_p->selected : 0].id;
+    }
+
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::discrete_distribution<size_t> dist(weights.begin(), weights.end());
+    return ids[dist(rng)];
+}
+
+static std::vector<llama_token> server_sample_and_accept_pq(
+        common_sampler *                                   smpl,
+        llama_context *                                    ctx,
+        const std::vector<int32_t> &                       idxs,
+        const llama_tokens &                               draft,
+        const std::vector<std::vector<llama_token_data>> & draft_dists) {
+    GGML_ASSERT(idxs.size() == draft.size() + 1 && "idxs.size() must be draft.size() + 1");
+
+    std::vector<llama_token> result;
+    result.reserve(idxs.size());
+
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+
+    size_t i = 0;
+    for (; i < draft.size(); ++i) {
+        static const std::vector<llama_token_data> empty_draft_p;
+        const llama_token target_sample = common_sampler_sample(smpl, ctx, idxs[i], true);
+        const auto * target_p = common_sampler_get_candidates(smpl, true);
+        const auto & draft_p = i < draft_dists.size() ? draft_dists[i] : empty_draft_p;
+
+        const float p = server_token_prob_from_candidates(target_p, draft[i]);
+        const float q = server_token_prob_from_distribution(draft_p, draft[i]);
+        const float accept_p = q > 0.0f ? std::min(1.0f, p/q) : 0.0f;
+        const bool accept = uniform(rng) < accept_p;
+
+        const llama_token id = accept
+            ? draft[i]
+            : server_sample_residual_token(target_p, draft_p);
+
+        common_sampler_accept(smpl, id, true);
+        result.push_back(id);
+
+        if (!accept) {
+            GGML_UNUSED(target_sample);
+            break;
+        }
+    }
+
+    if (i == draft.size()) {
+        const llama_token id = common_sampler_sample(smpl, ctx, idxs[i], true);
+        common_sampler_accept(smpl, id, true);
+        result.push_back(id);
+    }
+
+    return result;
+}
 
 // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
 enum slot_state {
@@ -3067,7 +3173,17 @@ private:
                 const size_t n_draft = slot.drafted.size();
 
                 // the accepted tokens from the speculation
-                const auto ids = common_sampler_sample_and_accept_n(slot.smpl.get(), ctx, slot.i_batch_dft, slot.drafted);
+                const bool use_pq_accept =
+                    slot.task->params.speculative.type == COMMON_SPECULATIVE_TYPE_MTP &&
+                    slot.task->params.speculative.pq_accept;
+                const auto ids = use_pq_accept
+                    ? server_sample_and_accept_pq(
+                            slot.smpl.get(),
+                            ctx,
+                            slot.i_batch_dft,
+                            slot.drafted,
+                            common_speculative_get_draft_distributions(slot.spec))
+                    : common_sampler_sample_and_accept_n(slot.smpl.get(), ctx, slot.i_batch_dft, slot.drafted);
                 const std::vector<int32_t> batch_idxs = slot.i_batch_dft;
                 slot.i_batch_dft.clear();
                 slot.drafted.clear();

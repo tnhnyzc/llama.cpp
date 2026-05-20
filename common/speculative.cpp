@@ -14,6 +14,7 @@
 #include <cstring>
 #include <iomanip>
 #include <map>
+#include <vector>
 
 #define SPEC_VOCAB_MAX_SIZE_DIFFERENCE  128
 #define SPEC_VOCAB_CHECK_START_TOKEN_ID 5
@@ -167,6 +168,11 @@ struct common_speculative_state {
         GGML_UNUSED(n_tokens);
         GGML_UNUSED(n_embd);
         GGML_UNUSED(start_pos);
+    }
+
+    virtual const std::vector<std::vector<llama_token_data>> & get_draft_distributions() const {
+        static const std::vector<std::vector<llama_token_data>> empty;
+        return empty;
     }
 
 };
@@ -797,6 +803,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
         llama_token frontier_token = 0;
         llama_pos prompt_size = 0;
         llama_tokens draft_tokens;
+        std::vector<std::vector<llama_token_data>> draft_distributions;
         std::vector<float> recurrence_hidden;
     };
 
@@ -927,6 +934,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
         round.frontier_token = 0;
         round.prompt_size = 0;
         round.draft_tokens.clear();
+        round.draft_distributions.clear();
 
         // 2. Re-apply the retained prefix boundary.
         apply_retained_prefix(retained_prefix_len);
@@ -954,6 +962,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
         pending_target_tokens.clear();
         pending_hidden_states.clear();
         round.draft_tokens.clear();
+        round.draft_distributions.clear();
 
         if (auto * mem = llama_get_memory(ctx_dft)) {
             llama_memory_clear(mem, true);
@@ -1093,6 +1102,8 @@ struct common_speculative_state_mtp : public common_speculative_state {
         const llama_token id = cur_p->data[0].id;
         const float       p  = cur_p->data[0].p;
 
+        round.draft_distributions.emplace_back(cur_p->data, cur_p->data + cur_p->size);
+
         common_sampler_accept(smpl, id, true);
         result.push_back(id);
 
@@ -1200,6 +1211,7 @@ struct common_speculative_state_mtp : public common_speculative_state {
         round.frontier_token = id_last;
         round.prompt_size = (llama_pos) prompt_tgt.size();
         round.draft_tokens.clear();
+        round.draft_distributions.clear();
 
         // 2. draft memory / guard
         auto * mem = llama_get_memory(ctx_dft);
@@ -1321,6 +1333,10 @@ struct common_speculative_state_mtp : public common_speculative_state {
                 break;
             }
         }
+    }
+
+    const std::vector<std::vector<llama_token_data>> & get_draft_distributions() const override {
+        return round.draft_distributions;
     }
 };
 
@@ -1687,6 +1703,16 @@ void common_speculative_set_first_pass_source(
     for (auto & impl : spec->impls) {
         impl->set_first_pass_source(source_tokens, hidden_states, n_tokens, n_embd, start_pos);
     }
+}
+
+const std::vector<std::vector<llama_token_data>> & common_speculative_get_draft_distributions(
+        const common_speculative * spec) {
+    static const std::vector<std::vector<llama_token_data>> empty;
+    if (spec == nullptr || spec->curr_impl == nullptr) {
+        return empty;
+    }
+
+    return spec->curr_impl->get_draft_distributions();
 }
 
 llama_tokens common_speculative_draft(
