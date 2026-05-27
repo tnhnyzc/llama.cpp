@@ -27,6 +27,20 @@ Use `-mtp --draft 1` for the current public Step 3.5 Flash MTP GGUF tested here.
 
 On the local Apple M3 Max test setup, a short server run improved from about `28.4 tok/s` without MTP to about `34.6 tok/s` with `-mtp --draft 1`. A broader four-prompt `temp 0.6` matrix found the same shape: `--draft 1` was the best average setting, while deeper drafts accepted more total draft tokens but did not pay for their extra MTP and verification work.
 
+A later controlled 384-token check on the `IQ3_S-3.64BPW-Q8_MTP` quant showed:
+
+| Runtime | Prompt cache path | Decode speed | Draft acceptance |
+| --- | --- | ---: | ---: |
+| This fork, no MTP | default cache path | 26.87 t/s | - |
+| This fork, `-mtp --draft 1` | default cache path | 32.55 t/s | 168/214, 78.5% |
+| StepFun `step3p5-mtp`, `-mtp --draft 1` | default cache path | 27.10 t/s | disabled by prompt-cache path |
+| StepFun `step3p5-mtp`, `-mtp --draft 1 --cache-ram 0` | prompt cache disabled | 33.51 t/s | 168/214, 78.5% |
+
+That comparison is the practical reason for the local prompt-cache/MTP handling:
+the StepFun branch can run MTP, but its server prompt-cache path disables MTP in
+this scenario. This fork resets the MTP draft-side state after prompt-cache
+restore and resumes speculation once fresh target hidden state is available.
+
 The tested GGUF reports:
 
 ```text
@@ -105,7 +119,7 @@ This prints per-prompt and averaged throughput. If the server response exposes s
 The Step findings line up with the broader MoE MTP work:
 
 - Acceptance rate matters, but it is not enough by itself. Extra verification rows and MTP rows still have to be cheap enough to pay for themselves.
-- Low-depth MTP is the conservative production path when deeper trained heads are absent or when verifier cost dominates.
+- Low-depth MTP is the conservative runtime path when deeper trained heads are absent or when verifier cost dominates.
 - Exact-match verification is conservative for stochastic sampling. p/q acceptance is the cleaner experimental path for non-greedy generation, but it is not automatically faster unless the extra accepted tokens offset verifier and sampler cost. The current implementation uses the draft top-k proposal distribution available from the MTP sampler.
 - Backend sampling and tree-style schedulers are useful only when their graph shape matches the model path. Blindly offloading sampling or increasing draft depth can make the system slower.
 - Quantization of MTP tensors can affect acceptance. For experimental MTP quants, keep nextn tensors as high precision as practical unless benchmarks show the quantized heads preserve acceptance.
