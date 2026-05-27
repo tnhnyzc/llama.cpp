@@ -49,6 +49,8 @@ The calibration imatrix is Bartowski's `stepfun-ai_Step-3.5-Flash-imatrix.gguf` 
 
 These files still require a Step 3.5 MTP llama.cpp fork. Stock llama.cpp is not the target runtime for this MTP path.
 
+Upstream Step 3.5 MTP support is being worked on in [ggml-org/llama.cpp#23274](https://github.com/ggml-org/llama.cpp/pull/23274). That PR follows llama.cpp's separate draft-model MTP path (`--spec-type draft-mtp` with `-md`). The published folders here target this same-GGUF fork as-is; upstream-style MTP serving requires a separate draft-only GGUF.
+
 ## Quick Start
 
 ```bash

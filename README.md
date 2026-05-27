@@ -6,6 +6,7 @@ This fork starts from StepFun's [`step3p5-mtp`](https://github.com/stepfun-ai/ll
 
 - Step-specific README: [docs/step35-mtp.md](docs/step35-mtp.md)
 - GGUF quants: [tnhnyzc/Step-3.5-Flash-MTP-GGUF](https://huggingface.co/tnhnyzc/Step-3.5-Flash-MTP-GGUF)
+- Upstream Step 3.5 MTP support is being discussed in [ggml-org/llama.cpp#23274](https://github.com/ggml-org/llama.cpp/pull/23274). That PR uses llama.cpp's separate draft-model MTP path; the published GGUF folders here target this experimental same-GGUF fork as-is.
 - Upstream llama.cpp content continues below.
 
 # llama.cpp
