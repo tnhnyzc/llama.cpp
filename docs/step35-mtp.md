@@ -1,91 +1,142 @@
-# Step 3.5 Flash MTP
+# Step 3.5 Flash MTP Speculative Decoding
 
-This branch is based on StepFun's Step 3.5 MTP llama.cpp fork:
+Experimental same-GGUF MTP speculative decoding for Step 3.5 Flash in llama.cpp.
 
-- upstream fork: https://github.com/stepfun-ai/llama.cpp
-- upstream branch: `step3p5-mtp`
-- base commit: `a2f5ec441` (`recover requires_dft lost in rebase`)
+This fork starts from StepFun's `step3p5-mtp` branch. It loads the normal Step target model and the model's internal `nextn` / MTP layer from the same GGUF. No separate draft model file is needed.
 
-The StepFun branch added Step 3.5 Flash runtime/model-loading support, MTP speculative support, SWA KV rollback, prompt-cache plumbing, and MTP quantization/conversion support. This branch layers additional server/runtime handling on top: prompt-cache restore behavior for MTP, SWA prompt-cache threshold fixes, MTP prompt-cache tail hidden-row handling, optional server-side p/q acceptance, a Step thinking-template flag, and repeatable runtime-check notes.
+## Current State
 
-The implementation is experimental same-GGUF MTP support for Step 3.5 Flash models that contain `step35.nextn_predict_layers`. It is intended for local testing and reproducible inference experiments, not as a production support claim for upstream llama.cpp.
+Based on:
 
-Tested server path:
+- StepFun fork: https://github.com/stepfun-ai/llama.cpp
+- StepFun branch: `step3p5-mtp`
+- StepFun base commit: `a2f5ec441` (`recover requires_dft lost in rebase`)
 
-```bash
-./build/bin/llama-server \
-  -m /path/to/Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP.gguf \
-  -mtp \
-  --draft 1 \
-  -np 1 \
-  -ngl 99
-```
+Tested locally:
 
-## Status And Scope
+- Apple M3 Max, Metal, 128 GB unified memory.
+- Step-3.5-Flash MTP GGUFs with `step35.nextn_predict_layers = 1`.
+- Core MTP / `nextn` tensors kept Q8_0 in the published GGUFs.
+- `llama-server -mtp --draft 1 -np 1 -ngl 99`.
 
-For the linked one-nextn Step 3.5 Flash GGUFs, `-mtp --draft 1` with the default exact-match verifier is the conservative starting point. Larger draft depths and p/q verification are available for experimentation, but should be treated as tuning knobs rather than the baseline path.
+Works:
 
-The measurements below are small Apple Silicon runtime checks. They document the code paths exercised by this branch and should not be read as a general benchmark suite.
+- Step 3.5 Flash model loading and MTP runtime from StepFun's branch.
+- Same-GGUF MTP serving with one trained `nextn` layer.
+- Server prompt-cache restore with MTP enabled. The target KV is reused; the draft-side MTP state is reset until fresh target hidden state is available.
+- SWA prompt-cache threshold fixes and prompt-cache tail hidden-row handling.
+- Optional p/q speculative acceptance for stochastic sampling.
+- A small repeatable server matrix with `scripts/bench-step-mtp.py`.
 
-## Runtime Checks
+Not proven:
 
-A 384-token server check on the `IQ3_S-3.64BPW-Q8_MTP` quant produced:
+- dGPU performance.
+- `--draft 2+` as a useful speed path for these one-nextn files.
+- Long-run production stability.
+- A broad sampler, temperature, and prompt matrix.
 
-| Runtime | Prompt cache path | Decode speed | Draft acceptance |
-| --- | --- | ---: | ---: |
-| This fork, no MTP | default cache path | 26.87 t/s | - |
-| This fork, `-mtp --draft 1` | default cache path | 32.55 t/s | 168/214, 78.5% |
-| StepFun `step3p5-mtp`, `-mtp --draft 1` | default cache path | 27.10 t/s | disabled by prompt-cache path |
-| StepFun `step3p5-mtp`, `-mtp --draft 1 --cache-ram 0` | prompt cache disabled | 33.51 t/s | 168/214, 78.5% |
+## Published GGUF
 
-In this check, StepFun's `step3p5-mtp` branch could run MTP when prompt cache was disabled, but its server prompt-cache path disabled MTP. This branch resets the MTP draft-side state after prompt-cache restore and resumes speculation once fresh target hidden state is available.
-
-The tested GGUF reports:
-
-```text
-step35.nextn_predict_layers = 1
-```
-
-## GGUF Variants
-
-The associated Hugging Face repository publishes these split-GGUF variants:
+GGUFs are available at [tnhnyzc/Step-3.5-Flash-MTP-GGUF](https://huggingface.co/tnhnyzc/Step-3.5-Flash-MTP-GGUF). They are split into quant folders; load the first shard from the folder you want and the split-aware loader will find the sibling shards.
 
 | Folder | Notes |
 | --- | --- |
-| `Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP/` | Mixed expert layout following the public AesSedai IQ4_XS recipe; MTP/nextn tensors kept Q8. |
-| `Step-3.5-Flash-MTP-IQ3_S-3.64BPW-Q8_MTP/` | Smaller custom IQ3_S expert layout; MTP/nextn tensors kept Q8. |
-| `Step-3.5-Flash-MTP-IQ3_XXS-3.27BPW-Q8_MTP/` | Smallest custom IQ3_XXS expert layout; MTP/nextn tensors kept Q8. |
+| `Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP/` | Mixed expert layout following the public AesSedai IQ4_XS recipe; MTP/nextn tensors kept Q8_0. |
+| `Step-3.5-Flash-MTP-IQ3_S-3.64BPW-Q8_MTP/` | Smaller custom IQ3_S expert layout; MTP/nextn tensors kept Q8_0. |
+| `Step-3.5-Flash-MTP-IQ3_XXS-3.27BPW-Q8_MTP/` | Smallest custom IQ3_XXS expert layout; MTP/nextn tensors kept Q8_0. |
 
-The calibration imatrix used for these quantizations is Bartowski's `stepfun-ai_Step-3.5-Flash-imatrix.gguf` from `bartowski/stepfun-ai_Step-3.5-Flash-GGUF`. The imatrix was not generated by this fork.
+The calibration imatrix is Bartowski's `stepfun-ai_Step-3.5-Flash-imatrix.gguf` from [bartowski/stepfun-ai_Step-3.5-Flash-GGUF](https://huggingface.co/bartowski/stepfun-ai_Step-3.5-Flash-GGUF). The imatrix was not generated by this fork.
 
-`--draft 2` and deeper drafts reuse the single MTP layer recurrently. They are not true multi-head MTP for this model file. The runtime maps draft step `k` to nextn layer `base + k` when a Step GGUF exposes multiple nextn layers, while clamping to the last available layer if the requested draft depth is larger than the model supports.
+These files still require a Step 3.5 MTP llama.cpp fork. Stock llama.cpp is not the target runtime for this MTP path.
 
-A small four-prompt depth sweep on the `IQ3_S-3.64BPW-Q8_MTP` quant used `temp 0.6`, `n_predict=128`, `--cache-ram 0`, and request-level dotted keys `"speculative.n_max"` / `"speculative.pq_accept"`:
+## Quick Start
 
-| `n_max` | p/q accept | avg tok/s | avg acceptance |
+```bash
+./build/bin/llama-server \
+  --model /path/to/quant-folder/first-shard.gguf \
+  --ctx-size 131072 \
+  -ctk q8_0 -ctv q8_0 \
+  -ctkd q8_0 -ctvd q8_0 \
+  -ngl 99 \
+  -np 1 \
+  -b 4096 \
+  -ub 1024 \
+  -fa on \
+  --cache-prompt \
+  --cache-ram 8192 \
+  -mtp \
+  --draft 1
+```
+
+Add normal sampler/server args as needed. The current tested path is server-first.
+
+## Runtime Constraints
+
+Required:
+
+- `general.architecture = step35`.
+- `step35.nextn_predict_layers > 0`.
+- A runtime branch with Step 3.5 MTP support.
+- For the prompt-cache/MTP behavior described here, use this branch rather than the unmodified StepFun branch.
+
+Automatically handled:
+
+- The same GGUF is used for target inference and the MTP draft path.
+- When the server restores a prompt cache, target KV is kept and draft-side MTP state is restarted.
+- If `--draft` is deeper than the GGUF's trained nextn layers, the runtime clamps to the last available nextn layer. With the published one-nextn files, this means deeper drafts reuse the single MTP layer recurrently.
+- `--spec-draft-backend-sampling` is off by default for Step MTP.
+
+Recommended:
+
+- Start with `-mtp --draft 1`.
+- Use the default exact-match verifier first.
+- Keep target and draft KV cache types explicit when testing: `-ctk q8_0 -ctv q8_0 -ctkd q8_0 -ctvd q8_0`.
+- Use `--flash-attn auto` or `--flash-attn on` on backends where it is supported.
+
+Avoid for normal serving:
+
+- `--draft 2` or higher, unless you are explicitly testing recurrent single-layer drafts.
+- Treating p/q acceptance as the default verifier.
+- Reading too much into one short generation. Acceptance is prompt- and sampler-sensitive.
+
+## Experimental Sampling Knobs
+
+These default to conservative/off values.
+
+- `--spec-draft-pq-accept`: enables stochastic p/q verification for MTP in `llama-server`.
+- `speculative.n_max`: request-level draft depth override used by the matrix helper.
+- `speculative.pq_accept`: request-level p/q toggle used by the matrix helper.
+- `--spec-draft-backend-sampling`: exposed, but keep it off for Step MTP for now. Step's multi-row first pass needs CPU sampling from the final output row.
+
+Use the defaults if you want the least surprising behavior.
+
+## Expected Performance
+
+On the local M3 Max setup, `--draft 1` showed a useful speedup in a short server smoke. Treat absolute tok/s as directional; thermal state, memory pressure, prompt shape, and sampler settings can move the raw numbers.
+
+384 generated-token check on `Step-3.5-Flash-MTP-IQ3_S-3.64BPW-Q8_MTP`:
+
+| mode | prompt cache | tok/s | accepted |
 | --- | --- | ---: | ---: |
-| 1 | off | 30.38 | 0.690 |
-| 1 | on | 28.10 | 0.696 |
-| 2 | off | 25.68 | 0.618 |
-| 2 | on | 24.93 | 0.578 |
-| 3 | off | 24.06 | 0.585 |
-| 3 | on | 24.04 | 0.564 |
-| 4 | off | 23.36 | 0.576 |
-| 4 | on | 22.04 | 0.562 |
+| no MTP | default cache path | `26.87` | - |
+| MTP `--draft 1` | default cache path | `32.55` | `168/214` |
+| StepFun branch, MTP `--draft 1` | default cache path | `27.10` | disabled by prompt-cache path |
+| StepFun branch, MTP `--draft 1 --cache-ram 0` | prompt cache disabled | `33.51` | `168/214` |
 
-In this sweep, `--draft 1` was the fastest setting for these one-nextn GGUFs. `--draft 2` and deeper remain diagnostic settings, especially for GGUFs with more trained nextn layers.
+Small four-prompt depth sweep on the same quant, `temp 0.6`, `n_predict=128`, `--cache-ram 0`:
 
-Use repeated runs before drawing conclusions from a single short check. Speculative acceptance is prompt- and sampler-sensitive, and short generations can swing noticeably.
+| n_max | p/q accept | avg tok/s | avg acceptance |
+| --- | --- | ---: | ---: |
+| 1 | off | `30.38` | `0.690` |
+| 1 | on | `28.10` | `0.696` |
+| 2 | off | `25.68` | `0.618` |
+| 2 | on | `24.93` | `0.578` |
+| 3 | off | `24.06` | `0.585` |
+| 3 | on | `24.04` | `0.564` |
+| 4 | off | `23.36` | `0.576` |
+| 4 | on | `22.04` | `0.562` |
 
-## Runtime Notes
-
-- `--spec-draft-backend-sampling` exists but is disabled by default for Step MTP. Step's multi-row first pass needs CPU sampling from the final output row; backend top-k sampling is not currently the right path here.
-- `--spec-draft-pq-accept` enables experimental stochastic p/q verification for MTP in `llama-server`. The default verifier is exact-match. When p/q is enabled, MTP proposals are sampled from the draft proposal distribution instead of always taking the top-1 token, so the stored draft probability is the actual proposal `q`. Small test matrices have been mixed, so p/q remains opt-in.
-- `llama-server` can use the RAM prompt cache with MTP. On prompt-cache restore, the target KV is reused, while the MTP draft context is reset and resumes after fresh target hidden state is produced. This avoids disabling prompt-cache entirely, but the first speculative opportunity after a cache restore may be skipped.
-- The MTP draft context runs with embeddings enabled. Warnings about embeddings requiring all input tokens to be marked as outputs are expected for this path.
-- `--draft 1` is the conservative path unless testing a GGUF with more than one trained nextn layer.
-
-## Repeatable Matrix
+For the published one-nextn GGUFs, this points to `--draft 1` as the practical starting point. Deeper drafts are still useful to test future files with more trained nextn layers, but they were slower in this sweep.
 
 Run a small fixed-prompt matrix against an already running server:
 
@@ -97,4 +148,4 @@ python3 scripts/bench-step-mtp.py \
   --pq false,true
 ```
 
-This prints per-prompt and averaged throughput. If the server response exposes speculative counters, it also prints acceptance; otherwise use the server logs for the acceptance line.
+If the server response exposes speculative counters, the helper prints acceptance. Otherwise use the server logs for the `draft acceptance` line.
