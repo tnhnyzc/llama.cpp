@@ -1,12 +1,20 @@
 # Step 3.5 Flash MTP
 
-This fork includes experimental same-GGUF MTP support for Step 3.5 Flash models that contain `step35.nextn_predict_layers`.
+This branch is based on StepFun's Step 3.5 MTP llama.cpp fork:
+
+- upstream fork: https://github.com/stepfun-ai/llama.cpp
+- upstream branch: `step3p5-mtp`
+- local base commit: `a2f5ec441` (`recover requires_dft lost in rebase`)
+
+The StepFun branch added Step 3.5 Flash runtime/model-loading support, MTP speculative support, SWA KV rollback, prompt-cache plumbing, and MTP quantization/conversion support. This branch layers local server/runtime hardening on top: prompt-cache restore behavior for MTP, SWA prompt-cache threshold fixes, MTP prompt-cache tail hidden-row handling, optional server-side p/q acceptance, a Step thinking-template flag, and local benchmarking notes.
+
+The implementation is experimental same-GGUF MTP support for Step 3.5 Flash models that contain `step35.nextn_predict_layers`.
 
 The locally tested path is:
 
 ```bash
 ./build/bin/llama-server \
-  -m /path/to/Step-3.5-Flash-MTP.gguf \
+  -m /path/to/Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP.gguf \
   -mtp \
   --draft 1 \
   -np 1 \
@@ -24,6 +32,18 @@ The tested GGUF reports:
 ```text
 step35.nextn_predict_layers = 1
 ```
+
+## Local GGUFs
+
+The locally prepared GGUFs use cleaner public names:
+
+| File | Notes |
+| --- | --- |
+| `Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP.gguf` | AesSedai-style mixed expert layout; MTP/nextn tensors kept Q8. |
+| `Step-3.5-Flash-MTP-IQ3_S-3.64BPW-Q8_MTP.gguf` | Smaller custom IQ3_S expert layout; MTP/nextn tensors kept Q8. |
+| `Step-3.5-Flash-MTP-IQ3_XXS-3.27BPW-Q8_MTP.gguf` | Smallest custom IQ3_XXS expert layout; MTP/nextn tensors kept Q8. |
+
+The imatrix used for these local quantizations came from Bartowski's Step 3.5 Flash GGUF work, not from this fork. Credit it separately when publishing model cards.
 
 So `--draft 2` and deeper drafts reuse the single MTP layer recurrently. They are not true multi-head MTP for this model file. The runtime now maps draft step `k` to nextn layer `base + k` when a future Step GGUF exposes multiple nextn layers, while clamping to the last available layer if the requested draft depth is larger than the model supports.
 

@@ -1227,8 +1227,8 @@ class TextModel(ModelBase):
         tokens: list[str] = []
         toktypes: list[int] = []
 
-        from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(self.dir_model)
+        from transformers import AutoTokenizer, PreTrainedConfig
+        tokenizer = AutoTokenizer.from_pretrained(self.dir_model, config=PreTrainedConfig(), trust_remote_code=False)
         vocab_size = self.hparams.get("vocab_size", len(tokenizer.vocab))
         assert max(tokenizer.vocab.values()) < vocab_size
 
@@ -1460,6 +1460,9 @@ class TextModel(ModelBase):
             res = "megrez"
         if chkhsh == "877081d19cf6996e2c4ff0e1236341e9b7bde288f5311a56a937f0afbbb3aeb5":
             # ref: https://huggingface.co/deepseek-ai/DeepSeek-V3
+            res = "deepseek-v3"
+        if chkhsh == "5841594bd6a8eeecd7207aeec6570831cc97ffaeba51e908bdaf560113177bae":
+            # ref: https://huggingface.co/stepfun-ai/Step-3.5-Flash
             res = "deepseek-v3"
         if chkhsh == "b3f499bb4255f8ca19fccd664443283318f2fd2414d5e0b040fbdd0cc195d6c5":
             # ref: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
