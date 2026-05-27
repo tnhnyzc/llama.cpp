@@ -1,5 +1,12 @@
 # llama.cpp
 
+> Step 3.5 Flash MTP fork: this repository's default branch is based on
+> StepFun's [`step3p5-mtp`](https://github.com/stepfun-ai/llama.cpp/tree/step3p5-mtp)
+> branch, with local server/runtime hardening for same-GGUF MTP usage.
+> See [docs/step35-mtp.md](docs/step35-mtp.md) for provenance, tested flags,
+> limitations, and local benchmark notes. GGUF files are published at
+> [tnhnyzc/Step-3.5-Flash-MTP-GGUF](https://huggingface.co/tnhnyzc/Step-3.5-Flash-MTP-GGUF).
+
 ![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
