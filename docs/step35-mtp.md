@@ -6,9 +6,9 @@ This branch is based on StepFun's Step 3.5 MTP llama.cpp fork:
 - upstream branch: `step3p5-mtp`
 - base commit: `a2f5ec441` (`recover requires_dft lost in rebase`)
 
-The StepFun branch added Step 3.5 Flash runtime/model-loading support, MTP speculative support, SWA KV rollback, prompt-cache plumbing, and MTP quantization/conversion support. This branch layers additional server/runtime handling on top: prompt-cache restore behavior for MTP, SWA prompt-cache threshold fixes, MTP prompt-cache tail hidden-row handling, optional server-side p/q acceptance, a Step thinking-template flag, and benchmark notes.
+The StepFun branch added Step 3.5 Flash runtime/model-loading support, MTP speculative support, SWA KV rollback, prompt-cache plumbing, and MTP quantization/conversion support. This branch layers additional server/runtime handling on top: prompt-cache restore behavior for MTP, SWA prompt-cache threshold fixes, MTP prompt-cache tail hidden-row handling, optional server-side p/q acceptance, a Step thinking-template flag, and repeatable runtime-check notes.
 
-The implementation is experimental same-GGUF MTP support for Step 3.5 Flash models that contain `step35.nextn_predict_layers`.
+The implementation is experimental same-GGUF MTP support for Step 3.5 Flash models that contain `step35.nextn_predict_layers`. It is intended for local testing and reproducible inference experiments, not as a production support claim for upstream llama.cpp.
 
 Tested server path:
 
@@ -21,13 +21,15 @@ Tested server path:
   -ngl 99
 ```
 
-## Current Recommendation
+## Status And Scope
 
-Use `-mtp --draft 1` for the published Step 3.5 Flash MTP GGUFs associated with this fork.
+For the linked one-nextn Step 3.5 Flash GGUFs, `-mtp --draft 1` with the default exact-match verifier is the conservative starting point. Larger draft depths and p/q verification are available for experimentation, but should be treated as tuning knobs rather than the baseline path.
 
-On an Apple M3 Max test setup, short server checks consistently showed `--draft 1` as the best default for the published one-nextn GGUFs. Deeper recurrent drafts accepted more total draft tokens in some runs, but their extra MTP and verification work did not pay for itself.
+The measurements below are small Apple Silicon runtime checks. They document the code paths exercised by this branch and should not be read as a general benchmark suite.
 
-A later controlled 384-token check on the `IQ3_S-3.64BPW-Q8_MTP` quant showed:
+## Runtime Checks
+
+A 384-token server check on the `IQ3_S-3.64BPW-Q8_MTP` quant produced:
 
 | Runtime | Prompt cache path | Decode speed | Draft acceptance |
 | --- | --- | ---: | ---: |
@@ -36,10 +38,7 @@ A later controlled 384-token check on the `IQ3_S-3.64BPW-Q8_MTP` quant showed:
 | StepFun `step3p5-mtp`, `-mtp --draft 1` | default cache path | 27.10 t/s | disabled by prompt-cache path |
 | StepFun `step3p5-mtp`, `-mtp --draft 1 --cache-ram 0` | prompt cache disabled | 33.51 t/s | 168/214, 78.5% |
 
-That comparison is the practical reason for the prompt-cache/MTP handling in this branch:
-the StepFun branch can run MTP, but its server prompt-cache path disables MTP in
-this scenario. This fork resets the MTP draft-side state after prompt-cache
-restore and resumes speculation once fresh target hidden state is available.
+In this check, StepFun's `step3p5-mtp` branch could run MTP when prompt cache was disabled, but its server prompt-cache path disabled MTP. This branch resets the MTP draft-side state after prompt-cache restore and resumes speculation once fresh target hidden state is available.
 
 The tested GGUF reports:
 
@@ -47,21 +46,21 @@ The tested GGUF reports:
 step35.nextn_predict_layers = 1
 ```
 
-## Published GGUFs
+## GGUF Variants
 
-The published GGUFs use these public names:
+The associated Hugging Face repository publishes these split-GGUF variants:
 
-| File | Notes |
+| Folder | Notes |
 | --- | --- |
-| `Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP.gguf` | AesSedai-style mixed expert layout; MTP/nextn tensors kept Q8. |
-| `Step-3.5-Flash-MTP-IQ3_S-3.64BPW-Q8_MTP.gguf` | Smaller custom IQ3_S expert layout; MTP/nextn tensors kept Q8. |
-| `Step-3.5-Flash-MTP-IQ3_XXS-3.27BPW-Q8_MTP.gguf` | Smallest custom IQ3_XXS expert layout; MTP/nextn tensors kept Q8. |
+| `Step-3.5-Flash-MTP-IQ4_XS-3.90BPW-Q8_MTP/` | Mixed expert layout following the public AesSedai IQ4_XS recipe; MTP/nextn tensors kept Q8. |
+| `Step-3.5-Flash-MTP-IQ3_S-3.64BPW-Q8_MTP/` | Smaller custom IQ3_S expert layout; MTP/nextn tensors kept Q8. |
+| `Step-3.5-Flash-MTP-IQ3_XXS-3.27BPW-Q8_MTP/` | Smallest custom IQ3_XXS expert layout; MTP/nextn tensors kept Q8. |
 
-The imatrix used for these quantizations came from Bartowski's Step 3.5 Flash GGUF work, not from this fork. Credit it separately when publishing model cards.
+The calibration imatrix used for these quantizations is Bartowski's `stepfun-ai_Step-3.5-Flash-imatrix.gguf` from `bartowski/stepfun-ai_Step-3.5-Flash-GGUF`. The imatrix was not generated by this fork.
 
-`--draft 2` and deeper drafts reuse the single MTP layer recurrently. They are not true multi-head MTP for this model file. The runtime maps draft step `k` to nextn layer `base + k` when a future Step GGUF exposes multiple nextn layers, while clamping to the last available layer if the requested draft depth is larger than the model supports.
+`--draft 2` and deeper drafts reuse the single MTP layer recurrently. They are not true multi-head MTP for this model file. The runtime maps draft step `k` to nextn layer `base + k` when a Step GGUF exposes multiple nextn layers, while clamping to the last available layer if the requested draft depth is larger than the model supports.
 
-In a fresh four-prompt matrix on the `IQ3_S-3.64BPW-Q8_MTP` quant, with `temp 0.6`, `n_predict=128`, `--cache-ram 0`, and request-level dotted keys `"speculative.n_max"` and `"speculative.pq_accept"`, the averages were:
+A small four-prompt depth sweep on the `IQ3_S-3.64BPW-Q8_MTP` quant used `temp 0.6`, `n_predict=128`, `--cache-ram 0`, and request-level dotted keys `"speculative.n_max"` / `"speculative.pq_accept"`:
 
 | `n_max` | p/q accept | avg tok/s | avg acceptance |
 | --- | --- | ---: | ---: |
@@ -74,11 +73,9 @@ In a fresh four-prompt matrix on the `IQ3_S-3.64BPW-Q8_MTP` quant, with `temp 0.
 | 4 | off | 23.36 | 0.576 |
 | 4 | on | 22.04 | 0.562 |
 
-This small matrix is not a benchmark suite, but it is enough to justify `--draft 1` as the default recommendation for these one-nextn GGUFs. `--draft 2` and deeper remain useful diagnostics for future GGUFs with more trained nextn layers, but they were slower in this run.
+In this sweep, `--draft 1` was the fastest setting for these one-nextn GGUFs. `--draft 2` and deeper remain diagnostic settings, especially for GGUFs with more trained nextn layers.
 
-Practical default: start with `--draft 1` and the default exact-match verifier. Use `--spec-draft-pq-accept` only when specifically testing stochastic speculative verification.
-
-Use repeated runs before drawing conclusions from a single short run. Speculative acceptance is prompt- and sampler-sensitive, and short generations can swing noticeably.
+Use repeated runs before drawing conclusions from a single short check. Speculative acceptance is prompt- and sampler-sensitive, and short generations can swing noticeably.
 
 ## Runtime Notes
 
@@ -86,7 +83,7 @@ Use repeated runs before drawing conclusions from a single short run. Speculativ
 - `--spec-draft-pq-accept` enables experimental stochastic p/q verification for MTP in `llama-server`. The default verifier is exact-match. When p/q is enabled, MTP proposals are sampled from the draft proposal distribution instead of always taking the top-1 token, so the stored draft probability is the actual proposal `q`. Small test matrices have been mixed, so p/q remains opt-in.
 - `llama-server` can use the RAM prompt cache with MTP. On prompt-cache restore, the target KV is reused, while the MTP draft context is reset and resumes after fresh target hidden state is produced. This avoids disabling prompt-cache entirely, but the first speculative opportunity after a cache restore may be skipped.
 - The MTP draft context runs with embeddings enabled. Warnings about embeddings requiring all input tokens to be marked as outputs are expected for this path.
-- `--draft 1` is the default recommendation unless testing a GGUF with more than one trained nextn layer.
+- `--draft 1` is the conservative path unless testing a GGUF with more than one trained nextn layer.
 
 ## Repeatable Matrix
 

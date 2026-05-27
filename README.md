@@ -1,8 +1,8 @@
 # Step 3.5 Flash MTP llama.cpp Fork
 
-This fork is based on StepFun's [`step3p5-mtp`](https://github.com/stepfun-ai/llama.cpp/tree/step3p5-mtp) branch and adds additional server/runtime handling for same-GGUF Step 3.5 Flash MTP usage.
+This experimental fork is based on StepFun's [`step3p5-mtp`](https://github.com/stepfun-ai/llama.cpp/tree/step3p5-mtp) branch and adds additional server/runtime handling for same-GGUF Step 3.5 Flash MTP usage.
 
-- Fork notes, tested flags, limitations, and benchmark results: [docs/step35-mtp.md](docs/step35-mtp.md)
+- Fork notes, tested flags, limitations, and runtime checks: [docs/step35-mtp.md](docs/step35-mtp.md)
 - GGUF quants: [tnhnyzc/Step-3.5-Flash-MTP-GGUF](https://huggingface.co/tnhnyzc/Step-3.5-Flash-MTP-GGUF)
 - Upstream llama.cpp content continues below.
 
